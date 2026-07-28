@@ -6,7 +6,7 @@ name: QDjob Daily
 env:
   QDJOB_REPO:        qdjob/QDjob  # 发布主仓库不用改
   QDJOB_ASSET:       QDjob_linux_amd64.zip  # 引用资源的名称不用更改
-  DATA_REPO:         2061360308/QDjob-Data  # 修改为你自己的数据仓库，确保仓库存在且有写入权限
+  DATA_REPO:         cainwy/QDjob-Data  # 修改为你自己的数据仓库，确保仓库存在且有写入权限
   GIT_USER:          github-actions[bot]  # 修改为你自己的 GitHub 用户名或保留默认
   GIT_EMAIL:         github-actions[bot]@users.noreply.github.com  # 修改为你自己的 GitHub 邮箱或保留默认
 
