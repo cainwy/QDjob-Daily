@@ -181,6 +181,7 @@ jobs:
           CHATID: ${{ secrets.CHATID }}
         run: |
           python extract_logs.py /tmp/qdjob-run/logs/qidian.log \
+            --today-only \
             --send \
             --bot-token "$BOTTOKEN" \
             --chat-id "$CHATID"
