@@ -26,6 +26,7 @@ QDjob 定时任务方案，每日自动拉取最新 QDjob 程序、获取隐私�
                执行 QDjob
                     ↓
          将生成的 logs/ 推送到数据仓库
+         调用extract_logs.py对日志进行处理, 并将结果推送到TG
 
    ┌─── workflow-keepalive ───┐
    │ 防止 60 天无提交后       │
@@ -39,6 +40,7 @@ QDjob 定时任务方案，每日自动拉取最新 QDjob 程序、获取隐私�
 QDjob-Daily/
 ├── .qdjob_version              # 主分支：当前 QDjob 版本记录
 ├── README.md
+├── extract_logs.py             # 日志处理
 └── .github/workflows/
     └── qdjob-daily.yml         # Action 工作流
 
@@ -89,8 +91,8 @@ git clone https://github.com/2061360308/QDjob-Daily.git
 
 1. **Settings** → **Secrets and variables** → **Actions**
 2. 点击 **New repository secret**
-3. Name: `DATA_REPO_TOKEN`
-4. Secret: 粘贴上一步生成的 token
+3. Name: `DATA_REPO_TOKEN`;`BOTTOKEN`;`CHATID`
+4. Secret: 粘贴上一步生成的 token; bot的token; chat ID
 5. 点击 **Add secret**
 
 ### 5. 修改工作流配置
@@ -107,6 +109,21 @@ env:
 ```
 
 只需将 `DATA_REPO` 改为 `你的用户名/你的数据仓库` 即可，无需在脚本内部修改。
+
+如果不需要TG通知,删除下面的内容:
+```yaml
+      - name: Extract logs and notify via Telegram
+        if: always()
+        env:
+          BOTTOKEN: ${{ secrets.BOTTOKEN }}
+          CHATID: ${{ secrets.CHATID }}
+        run: |
+          python extract_logs.py /tmp/qdjob-run/logs/qidian.log \
+            --today-only \
+            --send \
+            --bot-token "$BOTTOKEN" \
+            --chat-id "$CHATID"
+```
 
 ### 6. 触发运行
 
