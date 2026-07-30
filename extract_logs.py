@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-提取 QDjob 日志摘要并推送 Telegram
+提取 QDjob 日志摘要并推送 Telegram（支持仅今日过滤）
 用法：
-    python extract_logs.py <log_file> [--send] [--bot-token TOKEN] [--chat-id CHAT_ID]
+    python extract_logs.py <log_file> [--today-only] [--date YYYY-MM-DD] [--send] [--bot-token TOKEN] [--chat-id CHAT_ID]
 """
 
 import re
@@ -12,9 +12,9 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Tuple
 import requests
 
-# 任务列表（包含周日可选任务）
+# 任务列表
 TASKS = [
-    "每周自动兑换章节卡",   # 仅周日出现
+    "每周自动兑换章节卡",
     "签到任务",
     "激励碎片任务",
     "章节卡任务",
@@ -23,38 +23,35 @@ TASKS = [
     "章节卡信息推送"
 ]
 
+def get_beijing_date():
+    """获取当前北京时间日期"""
+    utc_now = datetime.utcnow()
+    beijing_now = utc_now + timedelta(hours=8)
+    return beijing_now.date()
+
 def parse_timestamp(line: str) -> Optional[datetime]:
-    """从日志行提取时间戳（精确到秒）"""
     match = re.match(r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d{3}', line)
     if match:
         return datetime.strptime(match.group(1), '%Y-%m-%d %H:%M:%S')
     return None
 
 def extract_username(line: str) -> Optional[str]:
-    """提取用户[xxx]或用户 [xxx] 中的用户名"""
     match = re.search(r'用户\s*\[([^\]]+)\]', line)
     return match.group(1) if match else None
 
 def extract_task_status(line: str) -> Optional[Tuple[str, str, str]]:
-    """
-    提取任务的最终状态（成功/失败及原因）
-    返回 (任务名, 状态, 原因)
-    """
-    # 匹配 "任务[xxx]执行完成" 或 "任务[xxx]执行失败"
     match = re.search(r'任务\[([^\]]+)\]执行(完成|失败)(?::\s*(.*))?', line)
     if match:
         task = match.group(1)
         status = '成功' if match.group(2) == '完成' else '失败'
         reason = match.group(3).strip() if match.group(3) else ''
         return (task, status, reason)
-    # 匹配因验证码中断/失败
     match2 = re.search(r'任务\[([^\]]+)\]因验证码(?:中断|失败):\s*(.*)', line)
     if match2:
         return (match2.group(1), '失败', f'因验证码: {match2.group(2).strip()}')
     return None
 
 def extract_chapter_info(lines: List[str], start_idx: int) -> Dict[str, str]:
-    """从指定行开始查找章节卡余额和最快过期信息"""
     info = {}
     for i in range(start_idx, len(lines)):
         line = lines[i]
@@ -63,15 +60,13 @@ def extract_chapter_info(lines: List[str], start_idx: int) -> Dict[str, str]:
             info['balance'] = bal.group(0).strip()
         exp = re.search(r'最快过期:\s*(.*?)(?=\s*$|, 过期时间)', line)
         if exp:
-            # 尝试获取完整行
             full = re.search(r'最快过期:\s*[^,]+,?\s*过期时间:\s*[\d\-:\s]+', line)
             info['expire'] = full.group(0).strip() if full else exp.group(0).strip()
         if 'balance' in info and 'expire' in info:
             break
     return info
 
-def parse_log_file(file_path: str) -> List[Dict]:
-    """解析日志文件，返回每个运行实例的摘要列表"""
+def parse_log_file(file_path: str, filter_date=None) -> List[Dict]:
     with open(file_path, 'r', encoding='utf-8') as f:
         lines = f.readlines()
 
@@ -85,7 +80,16 @@ def parse_log_file(file_path: str) -> List[Dict]:
                 i += 1
                 continue
 
-            # 收集该实例的所有行（直到下一个启动或文件末尾）
+            # 如果设置了日期过滤且当前实例不是目标日期，跳过但继续扫描（因为后面可能还有）
+            if filter_date is not None and start_time.date() != filter_date:
+                # 仍需跳过该实例的所有行
+                j = i + 1
+                while j < len(lines) and 'QDjob程序启动' not in lines[j]:
+                    j += 1
+                i = j
+                continue
+
+            # 收集该实例的所有行
             instance_lines = []
             j = i
             while j < len(lines):
@@ -93,16 +97,16 @@ def parse_log_file(file_path: str) -> List[Dict]:
                     break
                 instance_lines.append(lines[j])
                 j += 1
-            i = j   # 移到下一个启动行
+            i = j
 
-            # 提取用户名（从所有行中查找第一个匹配）
+            # 提取用户名
             username = None
             for l in instance_lines:
                 username = extract_username(l)
                 if username:
                     break
 
-            # 解析任务状态（只保留每个任务的最终状态，即最后一次出现）
+            # 解析任务状态
             tasks_status = {task: None for task in TASKS}
             for l in instance_lines:
                 status_info = extract_task_status(l)
@@ -111,7 +115,7 @@ def parse_log_file(file_path: str) -> List[Dict]:
                     if task in tasks_status:
                         tasks_status[task] = {'status': status, 'reason': reason}
 
-            # 查找章节卡信息（在"章节卡信息推送"完成后）
+            # 章节卡信息
             chapter_balance = ''
             chapter_expire = ''
             for idx, l in enumerate(instance_lines):
@@ -121,7 +125,7 @@ def parse_log_file(file_path: str) -> List[Dict]:
                     chapter_expire = info.get('expire', '')
                     break
 
-            # 计算结束时间（从后往前找第一条有时间戳的行）
+            # 结束时间
             end_time = None
             for l in reversed(instance_lines):
                 ts = parse_timestamp(l)
@@ -149,7 +153,6 @@ def parse_log_file(file_path: str) -> List[Dict]:
     return instances
 
 def format_summary(summary: Dict) -> str:
-    """格式化单个运行实例的摘要"""
     start = summary['start_time'].strftime('%Y-%m-%d %H:%M:%S')
     duration_sec = summary['duration'].total_seconds()
     hours, rem = divmod(duration_sec, 3600)
@@ -185,7 +188,6 @@ def format_summary(summary: Dict) -> str:
     return "\n".join(lines)
 
 def send_telegram(text: str, bot_token: str, chat_id: str):
-    """通过 Telegram Bot 发送消息"""
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     resp = requests.post(url, json={'chat_id': chat_id, 'text': text, 'parse_mode': 'HTML'})
     resp.raise_for_status()
@@ -193,14 +195,23 @@ def send_telegram(text: str, bot_token: str, chat_id: str):
 def main():
     parser = argparse.ArgumentParser(description='提取 QDjob 日志摘要并推送')
     parser.add_argument('log_file', help='日志文件路径')
+    parser.add_argument('--today-only', action='store_true', help='只提取今天（北京时间）的日志')
+    parser.add_argument('--date', help='指定日期，格式 YYYY-MM-DD（覆盖 --today-only）')
     parser.add_argument('--send', action='store_true', help='实际发送 Telegram 消息')
     parser.add_argument('--bot-token', help='Telegram Bot Token（发送时必需）')
     parser.add_argument('--chat-id', help='Telegram Chat ID（发送时必需）')
     args = parser.parse_args()
 
-    instances = parse_log_file(args.log_file)
+    # 确定过滤日期
+    target_date = None
+    if args.date:
+        target_date = datetime.strptime(args.date, '%Y-%m-%d').date()
+    elif args.today_only:
+        target_date = get_beijing_date()
+
+    instances = parse_log_file(args.log_file, filter_date=target_date)
     if not instances:
-        print("未找到任何运行实例。")
+        print("未找到任何匹配的日志实例。")
         return
 
     all_messages = []
