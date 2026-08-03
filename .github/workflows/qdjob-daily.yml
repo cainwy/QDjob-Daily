@@ -179,12 +179,19 @@ jobs:
         env:
           BOTTOKEN: ${{ secrets.BOTTOKEN }}
           CHATID: ${{ secrets.CHATID }}
+          SMTP_USER: ${{ secrets.SMTPUSER }}
+          SMTP_PASSWORD: ${{ secrets.SMTPPASSWORD }}
+          EMAIL_TO: ${{ secrets.EMAILTO }}
         run: |
           python extract_logs.py /tmp/qdjob-run/logs/qidian.log \
             --today-only \
             --send \
             --bot-token "$BOTTOKEN" \
             --chat-id "$CHATID"
+            --alert-email\
+            --smtp-user "$SMTP_USER" \
+            --smtp-password "$SMTP_PASSWORD" \
+            --email-to "SEMAIL_TO"
 
   workflow-keepalive:
     if: github.event_name == 'schedule'
