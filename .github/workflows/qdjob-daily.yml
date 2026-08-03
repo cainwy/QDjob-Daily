@@ -191,7 +191,7 @@ jobs:
             --alert-email\
             --smtp-user "$SMTP_USER" \
             --smtp-password "$SMTP_PASSWORD" \
-            --email-to "EMAIL_TO"
+            --email-to "$EMAIL_TO"
 
   workflow-keepalive:
     if: github.event_name == 'schedule'
