@@ -187,7 +187,7 @@ jobs:
             --today-only \
             --send \
             --bot-token "$BOTTOKEN" \
-            --chat-id "$CHATID"
+            --chat-id "$CHATID" \
             --alert-email\
             --smtp-user "$SMTP_USER" \
             --smtp-password "$SMTP_PASSWORD" \
