@@ -11,6 +11,9 @@ import argparse
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Tuple
 import requests
+import smtplib
+from email.mime.text import MIMEText
+from email.header import Header
 
 # 任务列表
 TASKS = [
@@ -191,7 +194,39 @@ def send_telegram(text: str, bot_token: str, chat_id: str):
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     resp = requests.post(url, json={'chat_id': chat_id, 'text': text, 'parse_mode': 'HTML'})
     resp.raise_for_status()
+    
+def send_email_alert(failed_tasks: List[Dict], smtp_host, smtp_port, smtp_user, smtp_password, email_from, email_to):
+    """
+    failed_tasks: 列表，每个元素包含 'time', 'username', 'task', 'reason'
+    """
+    if not failed_tasks:
+        return
 
+    subject = f"QDjob 验证码失败报警 - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+    body_lines = ["以下任务因验证码问题执行失败：\n"]
+    for item in failed_tasks:
+        body_lines.append(f"时间: {item['time']}")
+        body_lines.append(f"用户: {item['username']}")
+        body_lines.append(f"任务: {item['task']}")
+        body_lines.append(f"失败原因: {item['reason']}")
+        body_lines.append("")
+    body = "\n".join(body_lines)
+
+    msg = MIMEText(body, 'plain', 'utf-8')
+    msg['Subject'] = Header(subject, 'utf-8')
+    msg['From'] = email_from
+    msg['To'] = email_to
+
+    try:
+        # with smtplib.SMTP(smtp_host, smtp_port) as server:
+        with smtplib.SMTP_SSL(smtp_host) as server:
+            # server.starttls()
+            server.login(smtp_user, smtp_password)
+            server.sendmail(email_from, [email_to], msg.as_string())
+        print("邮件报警已发送。")
+    except Exception as e:
+        print(f"邮件发送失败: {e}")
+        
 def main():
     parser = argparse.ArgumentParser(description='提取 QDjob 日志摘要并推送')
     parser.add_argument('log_file', help='日志文件路径')
@@ -200,7 +235,17 @@ def main():
     parser.add_argument('--send', action='store_true', help='实际发送 Telegram 消息')
     parser.add_argument('--bot-token', help='Telegram Bot Token（发送时必需）')
     parser.add_argument('--chat-id', help='Telegram Chat ID（发送时必需）')
+    parser.add_argument('--alert-email', action='store_true', help='检测到验证码失败时发送邮件报警')
+    # parser.add_argument('--smtp-host', help='SMTP 服务器地址')
+    # parser.add_argument('--smtp-port', type=int, help='SMTP 端口')
+    parser.add_argument('--smtp-user', help='SMTP 用户名')
+    parser.add_argument('--smtp-password', help='SMTP 密码')
+    # parser.add_argument('--email-from', help='发件人邮箱')
+    parser.add_argument('--email-to', help='收件人邮箱')
     args = parser.parse_args()
+    smtp_host = 'smtp.163.com'
+    smtp_port = 465
+    email_from = args.smtp_user
 
     # 确定过滤日期
     target_date = None
@@ -220,6 +265,28 @@ def main():
 
     combined = "\n\n".join(all_messages)
 
+    # 收集所有验证码失败任务（跨实例）
+    captcha_failures = []
+    for inst in instances:
+        for task, info in inst['tasks'].items():
+            if info and info['status'] == '失败' and '验证码' in info['reason']:
+                captcha_failures.append({
+                    'time': inst['start_time'].strftime('%Y-%m-%d %H:%M:%S'),
+                    'username': inst['username'],
+                    'task': task,
+                    'reason': info['reason']
+                })
+
+    # 发送邮件报警（如果启用且存在失败）
+    if args.alert_email and captcha_failures:
+        if not all([smtp_host, smtp_port, args.smtp_user, args.smtp_password, email_from, args.email_to]):
+            print("警告：邮件报警已启用但 SMTP 配置不完整，跳过邮件发送。")
+        else:
+            send_email_alert(captcha_failures, smtp_host, smtp_port,
+                             args.smtp_user, args.smtp_password,
+                             email_from, args.email_to)
+
+    
     if args.send:
         if not args.bot_token or not args.chat_id:
             print("错误：发送消息需要提供 --bot-token 和 --chat-id")
