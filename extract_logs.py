@@ -215,9 +215,18 @@ def load_notified_state(state_file):
 
 def save_notified_state(state_file, state):
     temp_file = state_file + '.tmp'
-    with open(temp_file, 'w') as f:
-        json.dump(state, f, indent=2)
-    os.replace(temp_file, state_file)  # 原子替换
+    try:
+        with open(temp_file, 'w', encoding='utf-8') as f:
+            json.dump(state, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())  # 确保数据写入磁盘
+        os.replace(temp_file, state_file)
+        print(f"状态已保存至 {os.path.abspath(state_file)}")
+    except Exception as e:
+        print(f"保存状态文件失败: {e}")
+        # 可选：保留临时文件供检查
+        if os.path.exists(temp_file):
+            print(f"临时文件保留在 {os.path.abspath(temp_file)}")
 
 def send_email_alert(failed_tasks: List[Dict], smtp_host, smtp_port, smtp_user, smtp_password, email_from, email_to):
     """
@@ -350,6 +359,13 @@ def main():
             time_key = inst['start_time'].strftime('%Y-%m-%d %H:%M:%S')
             if time_key not in state[today_str]:
                 state[today_str].append(time_key)
+        print(f"更新后的状态: {json.dumps(state, indent=2)}")  # 打印
+        state_file_abs = os.path.abspath(state_file)
+        print(f"状态文件路径: {state_file_abs}")
+        print(f"即将写入的状态内容: {json.dumps(state, indent=2)}")
+
+        # save_notified_state(state_file, state)
+        print(f"已更新状态文件 {state_file_abs}")
         save_notified_state(state_file, state)
         print(f"已更新状态文件 {state_file}")
 
