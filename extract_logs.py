@@ -198,13 +198,26 @@ def send_telegram(text: str, bot_token: str, chat_id: str):
 
 def load_notified_state(state_file):
     if os.path.exists(state_file):
-        with open(state_file, 'r') as f:
-            return json.load(f)
+        try:
+            with open(state_file, 'r') as f:
+                content = f.read().strip()
+                if not content:  # 文件为空
+                    return {}
+                return json.loads(content)
+        except (json.JSONDecodeError, IOError) as e:
+            # 文件损坏或格式错误，备份后返回空字典
+            print(f"状态文件读取失败 ({e})，将备份并重新创建")
+            backup_file = state_file + '.bak'
+            if os.path.exists(state_file):
+                os.rename(state_file, backup_file)
+            return {}
     return {}
 
 def save_notified_state(state_file, state):
-    with open(state_file, 'w') as f:
+    temp_file = state_file + '.tmp'
+    with open(temp_file, 'w') as f:
         json.dump(state, f, indent=2)
+    os.replace(temp_file, state_file)  # 原子替换
 
 def send_email_alert(failed_tasks: List[Dict], smtp_host, smtp_port, smtp_user, smtp_password, email_from, email_to):
     """
