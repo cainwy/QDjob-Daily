@@ -174,6 +174,13 @@ jobs:
             git commit -m "Update logs $(date +%Y-%m-%d)" 2>/dev/null || true
             git push
           fi
+
+      - name: Restore notified state cache
+        uses: actions/cache@v3
+        id: cache-state
+        with:
+          path: notified_state.json
+          key: notified-state  # 固定 key，跨运行共享
       - name: Extract logs and notify via Telegram
         if: always()
         env:
@@ -192,6 +199,15 @@ jobs:
             --smtp-user "$SMTP_USER" \
             --smtp-password "$SMTP_PASSWORD" \
             --email-to "$EMAIL_TO"
+      - name: Check notified_state.json content
+        run: cat notified_state.json
+      - name: Save notified state cache
+        uses: actions/cache@v3
+        with:
+          path: notified_state.json
+          key: notified-state
+      - name: Check notified_state.json save
+        run: cat notified_state.json
 
   workflow-keepalive:
     if: github.event_name == 'schedule'
