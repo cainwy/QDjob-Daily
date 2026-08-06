@@ -4,7 +4,8 @@
 用法：
     python extract_logs.py <log_file> [--today-only] [--date YYYY-MM-DD] [--send] [--bot-token TOKEN] [--chat-id CHAT_ID]
 """
-
+import json
+import os
 import re
 import sys
 import argparse
@@ -194,7 +195,17 @@ def send_telegram(text: str, bot_token: str, chat_id: str):
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     resp = requests.post(url, json={'chat_id': chat_id, 'text': text, 'parse_mode': 'HTML'})
     resp.raise_for_status()
-    
+
+def load_notified_state(state_file):
+    if os.path.exists(state_file):
+        with open(state_file, 'r') as f:
+            return json.load(f)
+    return {}
+
+def save_notified_state(state_file, state):
+    with open(state_file, 'w') as f:
+        json.dump(state, f, indent=2)
+
 def send_email_alert(failed_tasks: List[Dict], smtp_host, smtp_port, smtp_user, smtp_password, email_from, email_to):
     """
     failed_tasks: 列表，每个元素包含 'time', 'username', 'task', 'reason'
@@ -242,6 +253,8 @@ def main():
     parser.add_argument('--smtp-password', help='SMTP 密码')
     # parser.add_argument('--email-from', help='发件人邮箱')
     parser.add_argument('--email-to', help='收件人邮箱')
+    parser.add_argument('--state-file', default='notified_state.json',
+                    help='状态文件路径，用于记录已通知实例')
     args = parser.parse_args()
     smtp_host = 'smtp.163.com'
     smtp_port = 465
@@ -257,6 +270,21 @@ def main():
     instances = parse_log_file(args.log_file, filter_date=target_date)
     if not instances:
         print("未找到任何匹配的日志实例。")
+        return
+    # ---------- 新增：去重逻辑 ----------
+    state_file = args.state_file
+    state = load_notified_state(state_file)
+    today_str = get_beijing_date().isoformat()  # '2026-08-06'
+    notified_times = set(state.get(today_str, []))
+
+    new_instances = []
+    for inst in instances:
+        time_key = inst['start_time'].strftime('%Y-%m-%d %H:%M:%S')
+        if time_key not in notified_times:
+            new_instances.append(inst)
+
+    if not new_instances:
+        print("所有今日实例已通知，跳过。")
         return
 
     all_messages = []
@@ -299,6 +327,18 @@ def main():
             sys.exit(1)
     else:
         print(combined)
+        
+    # ---------- 更新状态文件（仅在至少一种通知被启用时） ----------
+    if args.send or args.alert_email:
+        # 将新实例的启动时间加入状态
+        if today_str not in state:
+            state[today_str] = []
+        for inst in new_instances:
+            time_key = inst['start_time'].strftime('%Y-%m-%d %H:%M:%S')
+            if time_key not in state[today_str]:
+                state[today_str].append(time_key)
+        save_notified_state(state_file, state)
+        print(f"已更新状态文件 {state_file}")
 
 if __name__ == '__main__':
     main()
