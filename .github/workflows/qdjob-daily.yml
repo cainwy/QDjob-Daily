@@ -158,6 +158,26 @@ jobs:
           cd /tmp/qdjob-run
           ./QDjob > /dev/null 2>&1
 
+
+      - name: Extract logs and notify via Telegram/Email
+        if: always()
+        env:
+          BOTTOKEN: ${{ secrets.BOTTOKEN }}
+          CHATID: ${{ secrets.CHATID }}
+          SMTP_USER: ${{ secrets.SMTPUSER }}
+          SMTP_PASSWORD: ${{ secrets.SMTPPASSWORD }}
+          EMAIL_TO: ${{ secrets.EMAILTO }}
+        run: |
+          python extract_logs.py /tmp/qdjob-run/logs/qidian.log \
+            --today-only \
+            --send \
+            --bot-token "$BOTTOKEN" \
+            --chat-id "$CHATID" \
+            --alert-email \
+            --smtp-user "$SMTP_USER" \
+            --smtp-password "$SMTP_PASSWORD" \
+            --email-to "$EMAIL_TO"
+      
       - name: Push logs to data repository
         if: always()
         env:
@@ -175,40 +195,7 @@ jobs:
             git push
           fi
 
-      - name: Restore notified state cache
-        uses: actions/cache@v3
-        id: cache-state
-        with:
-          path: notified_state.json
-          key: notified-state  # 固定 key，跨运行共享
-      - name: Extract logs and notify via Telegram
-        if: always()
-        env:
-          BOTTOKEN: ${{ secrets.BOTTOKEN }}
-          CHATID: ${{ secrets.CHATID }}
-          SMTP_USER: ${{ secrets.SMTPUSER }}
-          SMTP_PASSWORD: ${{ secrets.SMTPPASSWORD }}
-          EMAIL_TO: ${{ secrets.EMAILTO }}
-        run: |
-          python extract_logs.py /tmp/qdjob-run/logs/qidian.log \
-            --today-only \
-            --send \
-            --bot-token "$BOTTOKEN" \
-            --chat-id "$CHATID" \
-            --alert-email\
-            --smtp-user "$SMTP_USER" \
-            --smtp-password "$SMTP_PASSWORD" \
-            --email-to "$EMAIL_TO"
-      - name: Check notified_state.json content
-        run: cat notified_state.json
-      - name: Save notified state cache
-        uses: actions/cache@v3
-        with:
-          path: notified_state.json
-          key: notified-state
-      - name: Check notified_state.json save
-        run: cat notified_state.json
-
+      
   workflow-keepalive:
     if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
