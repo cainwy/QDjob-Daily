@@ -15,7 +15,7 @@ import requests
 import smtplib
 from email.mime.text import MIMEText
 from email.header import Header
-
+NOTIFIED_MARKER = '[NOTIFIED]'
 # 任务列表
 TASKS = [
     "每周自动兑换章节卡",
@@ -102,7 +102,7 @@ def parse_log_file(file_path: str, filter_date=None) -> List[Dict]:
                 instance_lines.append(lines[j])
                 j += 1
             i = j
-
+            notified = any(NOTIFIED_MARKER in l for l in instance_lines)
             # 提取用户名
             username = None
             for l in instance_lines:
@@ -148,7 +148,8 @@ def parse_log_file(file_path: str, filter_date=None) -> List[Dict]:
                 'chapter_balance': chapter_balance,
                 'chapter_expire': chapter_expire,
                 'end_time': end_time,
-                'duration': duration
+                'duration': duration,
+                'notified': notified, 
             }
             instances.append(summary)
         else:
@@ -196,37 +197,70 @@ def send_telegram(text: str, bot_token: str, chat_id: str):
     resp = requests.post(url, json={'chat_id': chat_id, 'text': text, 'parse_mode': 'HTML'})
     resp.raise_for_status()
 
-def load_notified_state(state_file):
-    if os.path.exists(state_file):
-        try:
-            with open(state_file, 'r') as f:
-                content = f.read().strip()
-                if not content:  # 文件为空
-                    return {}
-                return json.loads(content)
-        except (json.JSONDecodeError, IOError) as e:
-            # 文件损坏或格式错误，备份后返回空字典
-            print(f"状态文件读取失败 ({e})，将备份并重新创建")
-            backup_file = state_file + '.bak'
-            if os.path.exists(state_file):
-                os.rename(state_file, backup_file)
-            return {}
-    return {}
 
-def save_notified_state(state_file, state):
-    temp_file = state_file + '.tmp'
-    try:
-        with open(temp_file, 'w', encoding='utf-8') as f:
-            json.dump(state, f, indent=2)
-            f.flush()
-            os.fsync(f.fileno())  # 确保数据写入磁盘
-        os.replace(temp_file, state_file)
-        print(f"状态已保存至 {os.path.abspath(state_file)}")
-    except Exception as e:
-        print(f"保存状态文件失败: {e}")
-        # 可选：保留临时文件供检查
-        if os.path.exists(temp_file):
-            print(f"临时文件保留在 {os.path.abspath(temp_file)}")
+
+def mark_notified_in_log(log_file: str, notified_instances: List[Dict]):
+    """
+    在日志文件中, 为每个已通知实例的 'QDjob程序启动' 行之后插入 [NOTIFIED] 标志位行.
+
+    参数条件:
+    - log_file: 日志文件路径, 必须存在且可读写
+    - notified_instances: 已通知实例列表, 每个实例必须含 'start_time' (datetime) 字段
+
+    实现要点:
+    - 通过 start_time 的秒级时间戳 + 'QDjob程序启动' 关键字精确匹配实例首行
+      (注: 同一秒启动多个实例的概率极低, 该匹配方式足够可靠)
+    - 已含 [NOTIFIED] 标志位的实例不重复插入 (检查首行的下一行)
+    - 原子写入: 先写 .tmp 临时文件再 os.replace, 避免中途崩溃损坏日志
+    - 标志位行沿用日志原格式, 不破坏 parse_log_file 的解析逻辑
+    """
+    if not notified_instances:
+        print("无需标记的实例.")
+        return
+
+    # 收集需要标记的实例起始时间戳 (秒级字符串, 用于匹配首行)
+    target_starts = set()
+    for inst in notified_instances:
+        target_starts.add(inst['start_time'].strftime('%Y-%m-%d %H:%M:%S'))
+
+    with open(log_file, 'r', encoding='utf-8') as f:
+        lines = f.readlines()
+
+    beijing_now = datetime.utcnow() + timedelta(hours=8)
+    notify_time_str = beijing_now.strftime('%Y-%m-%d %H:%M:%S')
+
+    new_lines = []
+    marked_count = 0
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        new_lines.append(line)  # 先保留当前行
+
+        # 检测是否为某个已通知实例的首行
+        # 条件: 行含 'QDjob程序启动' 且时间戳 (秒级) 在目标集合中
+        if 'QDjob程序启动' in line:
+            ts_match = re.match(r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})', line)
+            if ts_match and ts_match.group(1) in target_starts:
+                # 检查下一行是否已是 [NOTIFIED] 标志位 (避免重复插入)
+                next_line = lines[i + 1] if i + 1 < len(lines) else ''
+                if NOTIFIED_MARKER not in next_line:
+                    # 提取原首行的毫秒部分, 保持时间戳格式一致
+                    ms_match = re.match(r'\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},(\d{3})', line)
+                    ms = ms_match.group(1) if ms_match else '000'
+                    # 构造标志位行, 沿用日志原有格式
+                    marker = (f"{ts_match.group(1)},{ms} - Qidian - INFO - {NOTIFIED_MARKER} "
+                              f"此实例已通过 TG/Email 通知, 通知时间: {notify_time_str} (北京时间)\n")
+                    new_lines.append(marker)
+                    marked_count += 1
+        i += 1
+
+    # 原子写入: 临时文件 + os.replace
+    temp_file = log_file + '.tmp'
+    with open(temp_file, 'w', encoding='utf-8') as f:
+        f.writelines(new_lines)
+    os.replace(temp_file, log_file)
+    print(f"已在日志 {log_file} 中为 {marked_count} 个实例插入 [NOTIFIED] 标志位")
+
 
 def send_email_alert(failed_tasks: List[Dict], smtp_host, smtp_port, smtp_user, smtp_password, email_from, email_to):
     """
@@ -293,17 +327,12 @@ def main():
     if not instances:
         print("未找到任何匹配的日志实例。")
         return
-    # ---------- 新增：去重逻辑 ----------
-    state_file = args.state_file
-    state = load_notified_state(state_file)
-    today_str = get_beijing_date().isoformat()  # '2026-08-06'
-    notified_times = set(state.get(today_str, []))
-
-    new_instances = []
-    for inst in instances:
-        time_key = inst['start_time'].strftime('%Y-%m-%d %H:%M:%S')
-        if time_key not in notified_times:
-            new_instances.append(inst)
+    # ---------- 去重: 过滤掉日志中已标记 [NOTIFIED] 的实例 ----------
+    new_instances = [inst for inst in instances if not inst['notified']]
+    skipped_count = len(instances) - len(new_instances)
+    if skipped_count > 0:
+        print(f"跳过 {skipped_count} 个已通知实例 (日志中含 [NOTIFIED] 标志位).")
+    print(f"共 {len(instances)} 个匹配实例, 其中 {len(new_instances)} 个待通知.")
 
     if not new_instances:
         print("所有今日实例已通知，跳过。")
@@ -326,7 +355,7 @@ def main():
                     'task': task,
                     'reason': info['reason']
                 })
-
+    any_notify_attempted = False
     # 发送邮件报警（如果启用且存在失败）
     if args.alert_email and captcha_failures:
         if not all([smtp_host, smtp_port, args.smtp_user, args.smtp_password, email_from, args.email_to]):
@@ -335,6 +364,7 @@ def main():
             send_email_alert(captcha_failures, smtp_host, smtp_port,
                              args.smtp_user, args.smtp_password,
                              email_from, args.email_to)
+            any_notify_attempted = True
 
     
     if args.send:
@@ -347,27 +377,17 @@ def main():
         except Exception as e:
             print(f"发送失败: {e}")
             sys.exit(1)
+        any_notify_attempted = True
     else:
         print(combined)
         
-    # ---------- 更新状态文件（仅在至少一种通知被启用时） ----------
-    if args.send or args.alert_email:
-        # 将新实例的启动时间加入状态
-        if today_str not in state:
-            state[today_str] = []
-        for inst in new_instances:
-            time_key = inst['start_time'].strftime('%Y-%m-%d %H:%M:%S')
-            if time_key not in state[today_str]:
-                state[today_str].append(time_key)
-        print(f"更新后的状态: {json.dumps(state, indent=2)}")  # 打印
-        state_file_abs = os.path.abspath(state_file)
-        print(f"状态文件路径: {state_file_abs}")
-        print(f"即将写入的状态内容: {json.dumps(state, indent=2)}")
 
-        # save_notified_state(state_file, state)
-        print(f"已更新状态文件 {state_file_abs}")
-        save_notified_state(state_file, state)
-        print(f"已更新状态文件 {state_file}")
+    # ---------- 写入日志标志位 ----------
+    # 仅在尝试过任一种通知后写入, 避免无通知时误标记
+    if any_notify_attempted:
+        mark_notified_in_log(args.log_file, new_instances)
+    else:
+        print("未启用任何通知方式, 不写入标志位.")
 
 if __name__ == '__main__':
     main()
