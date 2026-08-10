@@ -339,14 +339,14 @@ def main():
         return
 
     all_messages = []
-    for idx, inst in enumerate(instances, 1):
+    for idx, inst in enumerate(new_instances, 1):
         all_messages.append(f"--- 运行实例 #{idx} ---\n{format_summary(inst)}")
 
     combined = "\n\n".join(all_messages)
 
     # 收集所有验证码失败任务（跨实例）
     captcha_failures = []
-    for inst in instances:
+    for inst in new_instances:
         for task, info in inst['tasks'].items():
             if info and info['status'] == '失败' and '验证码' in info['reason']:
                 captcha_failures.append({
