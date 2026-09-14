@@ -12,7 +12,8 @@ env:
 
 on:
   schedule:
-    - cron: '30 3 * * *'
+    - cron: '44 1 * * *'
+      timezone: 'Asia/Shanghai'
   workflow_dispatch:
 
 permissions:
