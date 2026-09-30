@@ -169,8 +169,12 @@ jobs:
           SMTP_PASSWORD: ${{ secrets.SMTPPASSWORD }}
           EMAIL_TO: ${{ secrets.EMAILTO }}
         run: |
+          LOG_DATE=$(grep "QDjob程序启动" /tmp/qdjob-run/logs/qidian.log \
+                 | tail -n1 \
+                 | grep -oE '^[0-9]{4}-[0-9]{2}-[0-9]{2}')
+          echo "Log date: $LOG_DATE"
           python extract_logs.py /tmp/qdjob-run/logs/qidian.log \
-            --today-only \
+            --date "$LOG_DATE" \
             --send \
             --bot-token "$BOTTOKEN" \
             --chat-id "$CHATID" \
