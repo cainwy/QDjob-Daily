@@ -53,7 +53,11 @@ def extract_task_status(line: str) -> Optional[Tuple[str, str, str]]:
     match2 = re.search(r'任务\[([^\]]+)\]因验证码(?:中断|失败):\s*(.*)', line)
     if match2:
         return (match2.group(1), '失败', f'因验证码: {match2.group(2).strip()}')
+    match3 = re.search(r'任务\[([^\]]+)\]因未登录(?:强行停止所有任务|中断|失败):\s*(.*)', line)
+    if match3:
+        return (match3.group(1), '失败', f'因未登录: {match3.group(2).strip()}')
     return None
+
 
 def extract_chapter_info(lines: List[str], start_idx: int) -> Dict[str, str]:
     info = {}
@@ -118,6 +122,16 @@ def parse_log_file(file_path: str, filter_date=None) -> List[Dict]:
                     task, status, reason = status_info
                     if task in tasks_status:
                         tasks_status[task] = {'status': status, 'reason': reason}
+            login_failed = False
+            for l in instance_lines:
+                if '登录已失效' in l or '因未登录强行停止' in l:
+                    login_failed = True
+                    break
+
+            if login_failed:
+                for task in TASKS:
+                    if tasks_status[task] is None:
+                        tasks_status[task] = {'status': '失败', 'reason': '未登录中断（未执行）'}
 
             # 章节卡信息
             chapter_balance = ''
@@ -348,12 +362,14 @@ def main():
     captcha_failures = []
     for inst in new_instances:
         for task, info in inst['tasks'].items():
-            if info and info['status'] == '失败' and '验证码' in info['reason']:
-                captcha_failures.append({
+            if info and info['status'] == '失败':
+                reason = info['reason']
+                if '验证码' in reason or '未登录' in reason:
+                    captcha_failures.append({
                     'time': inst['start_time'].strftime('%Y-%m-%d %H:%M:%S'),
                     'username': inst['username'],
                     'task': task,
-                    'reason': info['reason']
+                    'reason': reason
                 })
     any_notify_attempted = False
     # 发送邮件报警（如果启用且存在失败）
