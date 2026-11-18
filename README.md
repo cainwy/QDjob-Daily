@@ -129,5 +129,6 @@ env:
 
 推送后自动部署，也可以手动触发：
 
-- **自动**：每日北京时间 08:30 自动执行（含随机延迟 0-5 分钟）
+- **自动**：每日北京时间 XX 自动执行（含随机延迟 0-5 分钟）
 - **手动**：Actions 页面 → QDjob Daily → Run workflow
+- **curl**: url -X POST  -H "Accept: application/vnd.github.v3+json" -H "Authorization信息"   https://api.github.com/repos/cainwy/QDjob-Daily/actions/workflows/qdjob-daily.yml/dispatches  -d "{\"ref\":\"main\"}"
